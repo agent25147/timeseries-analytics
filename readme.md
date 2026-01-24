@@ -1,4 +1,4 @@
-\# TimeSeriesAnalytics
+# TimeSeriesAnalytics
 
 
 
@@ -6,17 +6,17 @@ OLAP analytics demo with ClickHouse, .NET 8, and Angular 18.
 
 
 
-\## Features
+## Features
 
-\- Server-side AG-Grid operations (filtering, sorting, grouping, pivoting)
+- Server-side AG-Grid operations (filtering, sorting, grouping, pivoting)
 
-\- ClickHouse time-series data
+- ClickHouse time-series data
 
-\- Dockerized deployment
+- Dockerized deployment
 
 
 
-\## Quick Start
+## Quick Start
 
 ```bash
 
@@ -26,21 +26,21 @@ docker-compose up --build
 
 
 
-\- Frontend: http://localhost:4200
+- Frontend: http://localhost:4200
 
-\- Backend API: http://localhost:5000
+- Backend API: http://localhost:5000
 
-\- ClickHouse: http://localhost:8123
+- ClickHouse: http://localhost:8123
 
 
 
-\## Development
+## Development
 
 
 
 See individual folders for setup:
 
-\- \[Backend](./backend/README.md)
+- \[Backend](./backend/README.md)
 
-\- \[Frontend](./frontend/README.md)
+- \[Frontend](./frontend/README.md)
 
