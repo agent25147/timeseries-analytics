@@ -13,7 +13,7 @@ services:
       - CLICKHOUSE_PASSWORD=demo_pass
     volumes:
       - clickhouse-data:/var/lib/clickhouse
-      - ./clickhouse/init-scripts:/docker-entrypoint-initdb.d
+      - ./clickhouse/config/users.xml:/etc/clickhouse-server/users.d/custom-users.xml
     networks:
       - ts-network
 
@@ -27,7 +27,7 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ClickHouse__Host=clickhouse
-      - ClickHouse__Port=9000
+      - ClickHouse__Port=8123
       - ClickHouse__Database=analytics
       - ClickHouse__Username=demo_user
       - ClickHouse__Password=demo_pass
