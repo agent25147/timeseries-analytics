@@ -1,0 +1,36 @@
+<div class="grid-container">
+  <div class="grid-header">
+    <h2>Time Series Analytics</h2>
+    <div class="grid-controls">
+      <button (click)="onRefresh()" class="btn btn-primary">
+        Refresh Data
+      </button>
+      <button (click)="onClearFilters()" class="btn btn-secondary">
+        Clear Filters
+      </button>
+      <button (click)="onClearSorting()" class="btn btn-secondary">
+        Clear Sorting
+      </button>
+    </div>
+  </div>
+
+  <ag-grid-angular
+    style="width: 100%; height: calc(100vh - 150px);"
+    [theme]="theme"
+    [columnDefs]="columnDefs"
+    [defaultColDef]="defaultColDef"
+    [autoGroupColumnDef]="autoGroupColumnDef"
+    [rowModelType]="rowModelType"
+    [cacheBlockSize]="cacheBlockSize"
+    [maxBlocksInCache]="maxBlocksInCache"
+    [pagination]="pagination"
+    [paginationPageSize]="paginationPageSize"
+    [paginationPageSizeSelector]="paginationPageSizeSelector"
+    [sideBar]="sideBar"
+    [rowGroupPanelShow]="'always'"
+    [pivotPanelShow]="'always'"
+    [suppressAggFuncInHeader]="true"
+    (gridReady)="onGridReady($event)"
+  >
+  </ag-grid-angular>
+</div>

@@ -7,33 +7,12 @@ public interface IQueryBuilderService
 {
     QueryResult BuildQuery(AgGridRequest request);
     QueryResult BuildCountQuery(AgGridRequest request);
+    QueryResult BuildPivotQuery(AgGridRequest request, List<string> pivotValues);
+    QueryResult BuildPivotColumnsQuery(AgGridRequest request);
 }
 public class QueryBuilderService: IQueryBuilderService
 {
     private readonly ILogger<QueryBuilderService> _logger;
-
-    // Map AG-Grid column names to database column names
-    private static readonly Dictionary<string, string> ColumnMap = new()
-        {
-            { "id", "id" },
-            { "transactionId", "transaction_id" },
-            { "timestamp", "timestamp" },
-            { "userId", "user_id" },
-            { "region", "region" },
-            { "category", "category" },
-            { "productName", "product_name" },
-            { "amount", "amount" },
-            { "quantity", "quantity" },
-            { "status", "status" },
-            { "paymentMethod", "payment_method" },
-            { "address", "address" },
-            { "shippingLane", "shipping_lane" },
-            { "scacCode", "scac_code" },
-            { "billToName", "bill_to_name" },
-            { "invoiceNumber", "invoice_number" },
-            { "currencyCode", "currency_code" },
-            { "weight", "weight" }
-        };
 
     public QueryBuilderService(ILogger<QueryBuilderService> logger)
     {
@@ -302,8 +281,293 @@ public class QueryBuilderService: IQueryBuilderService
         sql.Append(' ');
     }
 
+    public QueryResult BuildPivotColumnsQuery(AgGridRequest request)
+    {
+        if (request.PivotCols == null || !request.PivotCols.Any())
+        {
+            return new QueryResult
+            {
+                Sql = "",
+                Parameters = new Dictionary<string, object>()
+            };
+        }
+
+        var pivotCol = request.PivotCols.First(); // For now, support single pivot column
+        var dbColumn = GetDbColumnName(pivotCol);
+
+        var sql = new StringBuilder();
+        sql.Append($"SELECT DISTINCT {dbColumn} FROM analytics.timeseries_data ");
+
+        // Apply filters if any
+        var parameters = new Dictionary<string, object>();
+        var hasWhere = false;
+
+        // Add group key filters
+        if (request.GroupKeys?.Any() == true && request.RowGroupCols?.Any() == true)
+        {
+            sql.Append("WHERE ");
+            hasWhere = true;
+
+            for (int i = 0; i < request.GroupKeys.Count; i++)
+            {
+                var groupCol = request.RowGroupCols[i];
+                var groupKey = request.GroupKeys[i];
+                var groupDbColumn = GetDbColumnName(groupCol);
+
+                sql.Append($"{groupDbColumn} = '{groupKey}' ");
+
+                if (i < request.GroupKeys.Count - 1)
+                {
+                    sql.Append("AND ");
+                }
+            }
+        }
+
+        // Add regular filters
+        if (request.FilterModel?.Any() == true)
+        {
+            if (hasWhere)
+            {
+                sql.Append("AND ");
+            }
+            else
+            {
+                sql.Append("WHERE ");
+            }
+
+            BuildFilterClauses(sql, request.FilterModel, parameters);
+        }
+
+        sql.Append($"ORDER BY {dbColumn}");
+
+        _logger.LogInformation("Getting pivot values with SQL: {Sql}", sql.ToString());
+
+        return new QueryResult
+        {
+            Sql = sql.ToString(),
+            Parameters = parameters
+        };
+    }
+
+    public QueryResult BuildPivotQuery(AgGridRequest request, List<string> pivotValues)
+    {
+        var sql = new StringBuilder();
+        var parameters = new Dictionary<string, object>();
+
+        var pivotCol = request.PivotCols!.First();
+        var pivotDbCol = GetDbColumnName(pivotCol);
+        var rowGroupCols = request.RowGroupCols ?? new List<string>();
+
+        // Gracefully handle missing valueCols - return row groups only
+        if (request.ValueCols == null || !request.ValueCols.Any())
+        {
+            _logger.LogWarning("Pivot mode requested but no ValueCols specified. Returning row groups only.");
+
+            // Just return row group columns without pivot aggregations
+            sql.Append("SELECT ");
+
+            if (rowGroupCols.Any())
+            {
+                foreach (var col in rowGroupCols)
+                {
+                    var dbCol = GetDbColumnName(col);
+                    sql.Append($"{dbCol}, ");
+                }
+
+                // Remove trailing comma
+                sql.Length -= 2;
+                sql.Append(' ');
+
+                sql.Append("FROM analytics.timeseries_data ");
+
+                // Add WHERE clauses if any
+                var hasWhere = false;
+                if (request.GroupKeys?.Any() == true)
+                {
+                    sql.Append("WHERE ");
+                    hasWhere = true;
+
+                    for (int i = 0; i < request.GroupKeys.Count; i++)
+                    {
+                        var groupCol = request.RowGroupCols![i];
+                        var groupKey = request.GroupKeys[i];
+                        var dbColumn = GetDbColumnName(groupCol);
+
+                        sql.Append($"{dbColumn} = '{groupKey}' ");
+
+                        if (i < request.GroupKeys.Count - 1)
+                        {
+                            sql.Append("AND ");
+                        }
+                    }
+                }
+
+                if (request.FilterModel?.Any() == true)
+                {
+                    if (hasWhere)
+                    {
+                        sql.Append("AND ");
+                    }
+                    else
+                    {
+                        sql.Append("WHERE ");
+                    }
+
+                    BuildFilterClauses(sql, request.FilterModel, parameters);
+                }
+
+                sql.Append($"GROUP BY {string.Join(", ", rowGroupCols.Select(GetDbColumnName))} ");
+                sql.Append($"ORDER BY {GetDbColumnName(rowGroupCols.First())} ASC ");
+
+                var limit_i = request.EndRow - request.StartRow;
+                sql.Append($"LIMIT {limit_i} OFFSET {request.StartRow}");
+            }
+            else
+            {
+                // No row groups either - return empty
+                sql.Append("1 WHERE 1=0");
+            }
+
+            return new QueryResult
+            {
+                Sql = sql.ToString(),
+                Parameters = parameters
+            };
+        }
+
+        var valueCols = request.ValueCols;
+
+        // SELECT clause - row group columns
+        sql.Append("SELECT ");
+        foreach (var col in rowGroupCols)
+        {
+            var dbCol = GetDbColumnName(col);
+            sql.Append($"{dbCol}, ");
+        }
+
+        // Add pivoted value columns using sumIf/avgIf/countIf
+        foreach (var pivotValue in pivotValues)
+        {
+            var safePivotValue = pivotValue.Replace("'", "''");
+            var sanitizedPivotValue = SanitizeColumnName(pivotValue);
+
+            foreach (var valueCol in valueCols)
+            {
+                var dbValueCol = GetDbColumnName(valueCol);
+
+                sql.Append($"sumIf({dbValueCol}, {pivotDbCol} = '{safePivotValue}') AS {sanitizedPivotValue}_{valueCol}_sum, ");
+                sql.Append($"avgIf({dbValueCol}, {pivotDbCol} = '{safePivotValue}') AS {sanitizedPivotValue}_{valueCol}_avg, ");
+                sql.Append($"countIf({pivotDbCol} = '{safePivotValue}') AS {sanitizedPivotValue}_{valueCol}_count, ");
+            }
+        }
+
+        // Remove trailing comma and space
+        sql.Length -= 2;
+        sql.Append(' ');
+
+        // FROM clause
+        sql.Append("FROM analytics.timeseries_data ");
+
+        // WHERE clause
+        var hasWhereClause = false;
+
+        // Add group key filters
+        if (request.GroupKeys?.Any() == true && request.RowGroupCols?.Any() == true)
+        {
+            sql.Append("WHERE ");
+            hasWhereClause = true;
+
+            for (int i = 0; i < request.GroupKeys.Count; i++)
+            {
+                var groupCol = request.RowGroupCols[i];
+                var groupKey = request.GroupKeys[i];
+                var dbColumn = GetDbColumnName(groupCol);
+
+                sql.Append($"{dbColumn} = '{groupKey}' ");
+
+                if (i < request.GroupKeys.Count - 1)
+                {
+                    sql.Append("AND ");
+                }
+            }
+        }
+
+        // Add regular filters
+        if (request.FilterModel?.Any() == true)
+        {
+            if (hasWhereClause)
+            {
+                sql.Append("AND ");
+            }
+            else
+            {
+                sql.Append("WHERE ");
+            }
+
+            BuildFilterClauses(sql, request.FilterModel, parameters);
+        }
+
+        // GROUP BY clause
+        if (rowGroupCols.Any())
+        {
+            sql.Append("GROUP BY ");
+            sql.Append(string.Join(", ", rowGroupCols.Select(GetDbColumnName)));
+            sql.Append(' ');
+        }
+
+        // ORDER BY clause
+        if (request.SortModel?.Any() == true)
+        {
+            BuildOrderByClause(sql, request.SortModel);
+        }
+        else if (rowGroupCols.Any())
+        {
+            sql.Append($"ORDER BY {GetDbColumnName(rowGroupCols.First())} ASC ");
+        }
+
+        // LIMIT and OFFSET
+        var limit = request.EndRow - request.StartRow;
+        sql.Append($"LIMIT {limit} OFFSET {request.StartRow}");
+
+        var finalSql = sql.ToString();
+        _logger.LogInformation("Generated Pivot SQL: {Sql}", finalSql);
+
+        return new QueryResult
+        {
+            Sql = finalSql,
+            Parameters = parameters
+        };
+    }
+
+    private string SanitizeColumnName(string columnName)
+    {
+        // Replace spaces, ampersands, and special chars with underscores or alternatives
+        return columnName
+            .Replace(" ", "_")           // Spaces to underscores
+            .Replace("&", "and")          // Ampersand to "and"
+            .Replace("-", "_")            // Hyphens to underscores
+            .Replace("'", "")             // Remove single quotes
+            .Replace("\"", "")            // Remove double quotes
+            .Replace("(", "")             // Remove parentheses
+            .Replace(")", "")
+            .Replace("/", "_")            // Slash to underscore
+            .Replace("\\", "_")           // Backslash to underscore
+            .Replace(".", "_")            // Dot to underscore
+            .Replace(",", "")             // Remove commas
+            .Replace("!", "")             // Remove exclamation
+            .Replace("?", "")             // Remove question mark
+            .Replace("@", "at")           // @ to "at"
+            .Replace("#", "num")          // # to "num"
+            .Replace("%", "pct")          // % to "pct"
+            .Replace("$", "dollar")       // $ to "dollar"
+            .Replace("*", "star")         // * to "star"
+            .Replace("+", "plus")         // + to "plus"
+            .Replace("=", "eq");          // = to "eq"
+    }
     private string GetDbColumnName(string agGridColumnName)
     {
-        return ColumnMap.TryGetValue(agGridColumnName, out var dbName) ? dbName : agGridColumnName;
+        return agGridColumnName;
+       // return ColumnMap.TryGetValue(agGridColumnName, out var dbName) ? dbName : agGridColumnName;
     }
+  
 }
