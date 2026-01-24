@@ -1,0 +1,6 @@
+@TimeSeriesAnalytics.Api_HostAddress = http://localhost:5226
+
+GET {{TimeSeriesAnalytics.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
