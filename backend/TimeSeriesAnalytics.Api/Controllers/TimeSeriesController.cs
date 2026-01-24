@@ -1,4 +1,4 @@
-﻿using Dapper;
+using Dapper;
 using Microsoft.AspNetCore.Mvc;
 using TimeSeriesAnalytics.Api.Models;
 using TimeSeriesAnalytics.Api.Services;
@@ -74,6 +74,18 @@ public class TimeSeriesController : ControllerBase
 
     private async Task<ActionResult<object>> HandlePivotQuery(AgGridRequest request)
     {
+        // Validate: Pivot mode requires at least one row group
+        if (request.RowGroupCols == null || !request.RowGroupCols.Any())
+        {
+            _logger.LogWarning("Pivot mode requested without row groups. Returning empty result.");
+            return Ok(new
+            {
+                data = new List<object>(),
+                lastRow = 0,
+                pivotResultFields = new List<string>()
+            });
+        }
+
         // Get query for unique pivot column values
         var pivotColumnsQuery = _queryBuilderService.BuildPivotColumnsQuery(request);
 
@@ -97,16 +109,53 @@ public class TimeSeriesController : ControllerBase
             countQuery.Sql,
             countQuery.Parameters);
 
+        // Build the list of all pivot result field names
+        var pivotResultFields = new List<string>();
+        foreach (var pivotValue in pivotColumns)
+        {
+            var sanitizedPivotValue = SanitizeColumnName(pivotValue);
+            foreach (var valueCol in request.ValueCols ?? new List<string>())
+            {
+                pivotResultFields.Add($"{sanitizedPivotValue}_{valueCol}");
+            }
+        }
+
         var response = new
         {
             data = dataList,
             lastRow = (int)totalCount,
-            secondaryColumns = pivotColumns
+            pivotResultFields = pivotResultFields
         };
 
-        _logger.LogInformation("Returning {Count} pivot records with {Columns} secondary columns",
-            dataList.Count, pivotColumns.Count);
+        _logger.LogInformation("Returning {Count} pivot records with {Columns} pivot result fields",
+            dataList.Count, pivotResultFields.Count);
 
         return Ok(response);
+    }
+
+    private string SanitizeColumnName(string columnName)
+    {
+        // Same sanitization logic as in QueryBuilderService
+        return columnName
+            .Replace(" ", "_")
+            .Replace("&", "and")
+            .Replace("-", "_")
+            .Replace("'", "")
+            .Replace("\"", "")
+            .Replace("(", "")
+            .Replace(")", "")
+            .Replace("/", "_")
+            .Replace("\\", "_")
+            .Replace(".", "_")
+            .Replace(",", "")
+            .Replace("!", "")
+            .Replace("?", "")
+            .Replace("@", "at")
+            .Replace("#", "num")
+            .Replace("%", "pct")
+            .Replace("$", "dollar")
+            .Replace("*", "star")
+            .Replace("+", "plus")
+            .Replace("=", "eq");
     }
 }

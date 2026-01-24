@@ -39,7 +39,7 @@ export class DataGridComponent implements OnInit {
   public rowModelType: 'serverSide' = 'serverSide';
   public cacheBlockSize = 100;
   public maxBlocksInCache = 10;
-  public pagination = true; // Enable pagination controls
+  public pagination = true;
   public paginationPageSize = 100;
   public paginationPageSizeSelector = [50, 100, 200, 500];
 
@@ -48,35 +48,27 @@ export class DataGridComponent implements OnInit {
   {
     field: 'transaction_id',
     headerName: 'Transaction ID',
-    width: 180,  // Narrower for GUID
+    width: 280,
     filter: 'agTextColumnFilter',
-    sortable: true,
-    valueFormatter: (params) => {
-      // Hide empty GUID (all zeros)
-      if (!params.value || params.value === '00000000-0000-0000-0000-000000000000') {
-        return '';
-      }
-      return params.value;
-    }
+    sortable: true
   },
   {
     field: 'timestamp',
     headerName: 'Timestamp',
-    width: 170,  // Fits date/time nicely
+    width: 180,
     filter: 'agDateColumnFilter',
     sortable: true,
     valueFormatter: (params) => {
-      // Hide default date (0001-01-01)
-      if (!params.value || params.value.startsWith('0001-01-01')) {
-        return '';
+      if (params.value) {
+        return new Date(params.value).toLocaleString();
       }
-      return new Date(params.value).toLocaleString();
+      return '';
     }
   },
   {
     field: 'region',
     headerName: 'Region',
-    width: 130,  // Short text
+    width: 150,
     filter: 'agTextColumnFilter',
     sortable: true,
     enableRowGroup: true,
@@ -85,7 +77,7 @@ export class DataGridComponent implements OnInit {
   {
     field: 'category',
     headerName: 'Category',
-    width: 130,  // Short text
+    width: 150,
     filter: 'agTextColumnFilter',
     sortable: true,
     enableRowGroup: true,
@@ -94,7 +86,7 @@ export class DataGridComponent implements OnInit {
   {
     field: 'status',
     headerName: 'Status',
-    width: 110,  // Very short
+    width: 130,
     filter: 'agTextColumnFilter',
     sortable: true,
     enableRowGroup: true,
@@ -103,18 +95,17 @@ export class DataGridComponent implements OnInit {
   {
     field: 'product_name',
     headerName: 'Product',
-    width: 180,  // Medium text
+    width: 200,
     filter: 'agTextColumnFilter',
     sortable: true
   },
   {
     field: 'amount',
     headerName: 'Amount',
-    width: 120,  // Number with currency
+    width: 130,
     filter: 'agNumberColumnFilter',
     sortable: true,
     aggFunc: 'sum',
-    enableValue: true,
     valueFormatter: (params) => {
       if (params.value != null) {
         return '$' + params.value.toFixed(2);
@@ -125,23 +116,22 @@ export class DataGridComponent implements OnInit {
   {
     field: 'quantity',
     headerName: 'Quantity',
-    width: 100,  // Simple number
+    width: 120,
     filter: 'agNumberColumnFilter',
     sortable: true,
-    aggFunc: 'sum',
-    enableValue: true
+    aggFunc: 'sum'
   },
   {
     field: 'user_id',
     headerName: 'User ID',
-    width: 100,  // Simple number
+    width: 120,
     filter: 'agNumberColumnFilter',
     sortable: true
   },
   {
     field: 'payment_method',
     headerName: 'Payment Method',
-    width: 140,  // Medium text
+    width: 150,
     filter: 'agTextColumnFilter',
     sortable: true,
     enablePivot: true
@@ -149,46 +139,45 @@ export class DataGridComponent implements OnInit {
   {
     field: 'bill_to_name',
     headerName: 'Bill To',
-    width: 180,  // Name field
+    width: 200,
     filter: 'agTextColumnFilter',
     sortable: true
   },
   {
     field: 'address',
     headerName: 'Address',
-    width: 220,  // Longer text
+    width: 250,
     filter: 'agTextColumnFilter',
     sortable: true
   },
   {
     field: 'shipping_lane',
     headerName: 'Shipping Lane',
-    width: 130,  // Medium text
+    width: 150,
     filter: 'agTextColumnFilter',
     sortable: true
   },
   {
     field: 'scac_code',
     headerName: 'SCAC Code',
-    width: 110,  // Short code
+    width: 120,
     filter: 'agTextColumnFilter',
     sortable: true
   },
   {
     field: 'currency_code',
     headerName: 'Currency',
-    width: 90,  // Very short (USD, EUR, etc.)
+    width: 100,
     filter: 'agTextColumnFilter',
     sortable: true
   },
   {
     field: 'weight',
     headerName: 'Weight (kg)',
-    width: 120,  // Number with unit
+    width: 130,
     filter: 'agNumberColumnFilter',
     sortable: true,
     aggFunc: 'sum',
-    enableValue: true,
     valueFormatter: (params) => {
       if (params.value != null) {
         return params.value.toFixed(2) + ' kg';
@@ -199,23 +188,17 @@ export class DataGridComponent implements OnInit {
   {
     field: 'invoice_number',
     headerName: 'Invoice #',
-    width: 180,  // GUID
+    width: 280,
     filter: 'agTextColumnFilter',
-    sortable: true,
-    valueFormatter: (params) => {
-      // Hide empty GUID (all zeros)
-      if (!params.value || params.value === '00000000-0000-0000-0000-000000000000') {
-        return '';
-      }
-      return params.value;
-    }
+    sortable: true
   }
-];
+  ];
 
 
   // Default column definition
   public defaultColDef: ColDef = {
-    minWidth: 80,
+    flex: 1,
+    minWidth: 100,
     resizable: true,
     sortable: false,
     filter: false
@@ -267,30 +250,28 @@ export class DataGridComponent implements OnInit {
     const datasource: IServerSideDatasource = {
       getRows: (params: IServerSideGetRowsParams) => {
         console.log('Server-side request:', params.request);
-        console.log('StartRow:', params.request.startRow, 'EndRow:', params.request.endRow);
         
         // Build AG-Grid request
         const request = this.buildRequest(params);
-        console.log('Built request:', request);
       
         // Call backend
         this.timeseriesService.query(request).subscribe({
           next: (response) => {
             console.log('Server response:', response);
-            console.log('Response data length:', response.data.length);
-            console.log('LastRow (total count):', response.lastRow);
-            console.log('Pivot result fields:', response.pivotResultFields);
       
-            // Check if this is a pivot response
-            if (response.pivotResultFields && response.pivotResultFields.length > 0) {
-              // Pivot mode response
+            // Check if this is a grouped request
+            const isGroupRequest = request.rowGroupCols && request.rowGroupCols.length > 0;
+            
+            if (isGroupRequest) {
+              // For grouped data, don't set rowCount to trigger on-demand loading
               params.success({
                 rowData: response.data,
-                rowCount: response.lastRow,
-                pivotResultFields: response.pivotResultFields
+                rowCount: response.data.length < (request.endRow - request.startRow) 
+                  ? request.startRow + response.data.length 
+                  : undefined
               });
             } else {
-              // Regular or grouped response
+              // For non-grouped data, use the total count
               params.success({
                 rowData: response.data,
                 rowCount: response.lastRow

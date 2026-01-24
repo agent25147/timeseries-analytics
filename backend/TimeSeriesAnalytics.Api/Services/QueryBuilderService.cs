@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using TimeSeriesAnalytics.Api.Models;
 
 namespace TimeSeriesAnalytics.Api.Services;
@@ -24,17 +24,21 @@ public class QueryBuilderService: IQueryBuilderService
         var sql = new StringBuilder();
         var parameters = new Dictionary<string, object>();
 
+        // Determine if we're at a leaf level (no more groups to expand)
+        var groupLevel = request.GroupKeys?.Count ?? 0;
+        var isLeafLevel = request.RowGroupCols?.Any() == true && groupLevel >= request.RowGroupCols.Count;
+
         // SELECT clause
         sql.Append("SELECT ");
 
-        if (request.RowGroupCols?.Any() == true)
+        if (request.RowGroupCols?.Any() == true && !isLeafLevel)
         {
-            // Grouping query
+            // Grouping query - still have levels to group by
             BuildGroupingSelect(sql, request);
         }
         else
         {
-            // Regular query - select all columns
+            // Regular query - select all columns (either no grouping or at leaf level)
             sql.Append("* ");
         }
 
@@ -81,8 +85,8 @@ public class QueryBuilderService: IQueryBuilderService
             BuildFilterClauses(sql, request.FilterModel, parameters);
         }
 
-        // GROUP BY clause
-        if (request.RowGroupCols?.Any() == true)
+        // GROUP BY clause (only if not at leaf level)
+        if (request.RowGroupCols?.Any() == true && !isLeafLevel)
         {
             BuildGroupByClause(sql, request);
         }
@@ -92,10 +96,9 @@ public class QueryBuilderService: IQueryBuilderService
         {
             BuildOrderByClause(sql, request.SortModel);
         }
-        else if (request.RowGroupCols?.Any() == true)
+        else if (request.RowGroupCols?.Any() == true && !isLeafLevel)
         {
             // Default sort for grouped data
-            var groupLevel = request.GroupKeys?.Count ?? 0;
             var currentGroupCol = request.RowGroupCols[groupLevel];
             var dbColumn = GetDbColumnName(currentGroupCol);
             sql.Append($"ORDER BY {dbColumn} ASC ");
@@ -124,11 +127,26 @@ public class QueryBuilderService: IQueryBuilderService
         var sql = new StringBuilder();
         var parameters = new Dictionary<string, object>();
 
-        sql.Append("SELECT COUNT(*) FROM analytics.timeseries_data ");
+        // Determine if we're counting groups or leaf rows
+        var groupLevel = request.GroupKeys?.Count ?? 0;
+        var isLeafLevel = request.RowGroupCols?.Any() == true && groupLevel >= request.RowGroupCols.Count;
+
+        if (request.RowGroupCols?.Any() == true && !isLeafLevel)
+        {
+            // Count distinct groups at current level
+            var currentGroupCol = request.RowGroupCols[groupLevel];
+            var dbColumn = GetDbColumnName(currentGroupCol);
+            sql.Append($"SELECT COUNT(DISTINCT {dbColumn}) FROM analytics.timeseries_data ");
+        }
+        else
+        {
+            // Count leaf rows
+            sql.Append("SELECT COUNT(*) FROM analytics.timeseries_data ");
+        }
 
         var hasWhere = false;
 
-        // Add group key filters
+        // Add group key filters for drill-down
         if (request.GroupKeys?.Any() == true && request.RowGroupCols?.Any() == true)
         {
             sql.Append("WHERE ");
@@ -164,6 +182,8 @@ public class QueryBuilderService: IQueryBuilderService
             BuildFilterClauses(sql, request.FilterModel, parameters);
         }
 
+        _logger.LogInformation("Count SQL: {Sql}", sql.ToString());
+
         return new QueryResult
         {
             Sql = sql.ToString(),
@@ -185,18 +205,17 @@ public class QueryBuilderService: IQueryBuilderService
             foreach (var valueCol in request.ValueCols)
             {
                 var dbValueCol = GetDbColumnName(valueCol);
-                sql.Append($"SUM({dbValueCol}) AS {valueCol}_sum, ");
-                sql.Append($"AVG({dbValueCol}) AS {valueCol}_avg, ");
-                sql.Append($"COUNT(*) AS {valueCol}_count, ");
+                // AG Grid expects the aggregated value in the original column name
+                sql.Append($"SUM({dbValueCol}) AS {valueCol}, ");
             }
         }
-        else
-        {
-            sql.Append("COUNT(*) AS count ");
-        }
+        
+        // Always add count for the group
+        sql.Append("COUNT(*) AS count ");
 
-        // Remove trailing comma
-        if (sql[sql.Length - 2] == ',')
+        // Remove trailing comma if present
+        var sqlString = sql.ToString();
+        if (sqlString.EndsWith(", "))
         {
             sql.Length -= 2;
             sql.Append(' ');
@@ -205,7 +224,6 @@ public class QueryBuilderService: IQueryBuilderService
 
     private void BuildFilterClauses(StringBuilder sql, List<ColumnFilter> filters, Dictionary<string, object> parameters)
     {
-        sql.Append("WHERE ");
         var filterClauses = new List<string>();
 
         foreach (var filter in filters)
@@ -455,9 +473,9 @@ public class QueryBuilderService: IQueryBuilderService
             {
                 var dbValueCol = GetDbColumnName(valueCol);
 
-                sql.Append($"sumIf({dbValueCol}, {pivotDbCol} = '{safePivotValue}') AS {sanitizedPivotValue}_{valueCol}_sum, ");
-                sql.Append($"avgIf({dbValueCol}, {pivotDbCol} = '{safePivotValue}') AS {sanitizedPivotValue}_{valueCol}_avg, ");
-                sql.Append($"countIf({pivotDbCol} = '{safePivotValue}') AS {sanitizedPivotValue}_{valueCol}_count, ");
+                // Cast to Float64 to avoid Decimal serialization issues
+                // AG Grid expects format: {pivotValue}_{valueCol} for the aggregated column
+                sql.Append($"CAST(sumIf({dbValueCol}, {pivotDbCol} = '{safePivotValue}') AS Float64) AS {sanitizedPivotValue}_{valueCol}, ");
             }
         }
 

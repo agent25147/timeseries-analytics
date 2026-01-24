@@ -28,5 +28,5 @@ export interface SortModel {
 export interface AgGridResponse<T> {
   data: T[];
   lastRow: number;
-  secondaryColumns?: string[];
+  pivotResultFields?: string[];
 }
