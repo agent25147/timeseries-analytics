@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: ts-analytics-clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      - CLICKHOUSE_DB=analytics
+      - CLICKHOUSE_USER=demo_user
+      - CLICKHOUSE_PASSWORD=demo_pass
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - ts-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ts-analytics-backend
+    ports:
+      - "5000:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ClickHouse__Host=clickhouse
+      - ClickHouse__Port=9000
+      - ClickHouse__Database=analytics
+      - ClickHouse__Username=demo_user
+      - ClickHouse__Password=demo_pass
+    depends_on:
+      - clickhouse
+    networks:
+      - ts-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ts-analytics-frontend
+    ports:
+      - "4200:80"
+    environment:
+      - API_URL=http://localhost:5000
+    depends_on:
+      - backend
+    networks:
+      - ts-network
+
+networks:
+  ts-network:
+    driver: bridge
+
+volumes:
+  clickhouse-data:
