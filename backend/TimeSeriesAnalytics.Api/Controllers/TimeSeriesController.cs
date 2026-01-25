@@ -23,6 +23,33 @@ public class TimeSeriesController : ControllerBase
         _logger = logger;
     }
 
+    [HttpGet("health")]
+    public async Task<IActionResult> Health()
+    {
+        try
+        {
+            // Test database connection
+            var result = await _clickHouseService.ExecuteScalarAsync<int>("SELECT 1");
+            
+            return Ok(new
+            {
+                status = "healthy",
+                timestamp = DateTime.UtcNow,
+                database = result == 1 ? "connected" : "error"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Health check failed");
+            return StatusCode(503, new
+            {
+                status = "unhealthy",
+                timestamp = DateTime.UtcNow,
+                error = ex.Message
+            });
+        }
+    }
+
     [HttpPost("query")]
     public async Task<ActionResult<object>> Query([FromBody] AgGridRequest request)
     {

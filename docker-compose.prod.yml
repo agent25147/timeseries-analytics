@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: ts-analytics-clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      - CLICKHOUSE_DB=analytics
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-demo_user}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-demo_pass}
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/config/users.xml:/etc/clickhouse-server/users.d/custom-users.xml
+    networks:
+      - ts-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  backend:
+    # Option 1: Build from source
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    
+    # Option 2: Use pre-built image (comment out build above and uncomment below)
+    # image: your-registry/ts-analytics-backend:latest
+    
+    container_name: ts-analytics-backend
+    ports:
+      - "${BACKEND_PORT:-5000}:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=${ASPNET_ENVIRONMENT:-Production}
+      - ASPNETCORE_URLS=http://+:8080
+      - ClickHouse__Host=clickhouse
+      - ClickHouse__Port=8123
+      - ClickHouse__Database=analytics
+      - ClickHouse__Username=${CLICKHOUSE_USER:-demo_user}
+      - ClickHouse__Password=${CLICKHOUSE_PASSWORD:-demo_pass}
+      - ClickHouse__UseCompression=true
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - ts-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/timeseries/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    # Option 1: Build from source
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    
+    # Option 2: Use pre-built image (comment out build above and uncomment below)
+    # image: your-registry/ts-analytics-frontend:latest
+    
+    container_name: ts-analytics-frontend
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - ts-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  ts-network:
+    driver: bridge
+
+volumes:
+  clickhouse-data:
+    driver: local
