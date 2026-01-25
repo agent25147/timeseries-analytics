@@ -55,7 +55,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors();
-app.UseHttpsRedirection();
+// Only use HTTPS redirection in production with proper certificates
+// app.UseHttpsRedirection();
 app.UseAuthorization();
 app.MapControllers();
 
