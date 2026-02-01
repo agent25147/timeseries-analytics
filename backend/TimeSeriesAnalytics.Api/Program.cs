@@ -23,6 +23,11 @@ builder.Services.AddScoped<IClickHouseInitializer, ClickHouseInitializer>();
 builder.Services.AddScoped<IDataGeneratorService, DataGeneratorService>();
 builder.Services.AddScoped<IQueryBuilderService, QueryBuilderService>();
 
+// Register background service for data seeding
+builder.Services.AddSingleton<IDataSeedJobService, DataSeedJobService>();
+builder.Services.AddHostedService(provider => 
+    (DataSeedJobService)provider.GetRequiredService<IDataSeedJobService>());
+
 // Configure CORS
 builder.Services.AddCors(options =>
 {
@@ -55,14 +60,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors();
-// Only use HTTPS redirection in production with proper certificates
-// app.UseHttpsRedirection();
+app.UseHttpsRedirection();
 app.UseAuthorization();
 app.MapControllers();
 
 app.Run();
-
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
