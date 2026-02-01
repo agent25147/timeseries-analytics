@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Threading.Channels;
 using TimeSeriesAnalytics.Api.Models;
 
 namespace TimeSeriesAnalytics.Api.Services;
@@ -17,8 +18,7 @@ public class DataSeedJobService : BackgroundService, IDataSeedJobService
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<DataSeedJobService> _logger;
     private readonly ConcurrentDictionary<string, DataSeedJob> _jobs = new();
-    private readonly ConcurrentQueue<DataSeedJob> _jobQueue = new();
-    private readonly CancellationTokenSource _cancellationTokenSource = new();
+    private readonly Channel<DataSeedJob> _jobChannel;
 
     public DataSeedJobService(
         IServiceProvider serviceProvider,
@@ -26,6 +26,16 @@ public class DataSeedJobService : BackgroundService, IDataSeedJobService
     {
         _serviceProvider = serviceProvider;
         _logger = logger;
+        
+        // Create unbounded channel for job queue
+        // SingleReader = true because we have one background worker
+        // SingleWriter = false because multiple API requests can add jobs
+        _jobChannel = Channel.CreateUnbounded<DataSeedJob>(
+            new UnboundedChannelOptions
+            {
+                SingleReader = true,
+                SingleWriter = false
+            });
     }
 
     public string StartJob(long recordCount, int batchSize)
@@ -43,7 +53,9 @@ public class DataSeedJobService : BackgroundService, IDataSeedJobService
         };
 
         _jobs[jobId] = job;
-        _jobQueue.Enqueue(job);
+        
+        // Write to channel - this will wake up the reader immediately
+        _jobChannel.Writer.TryWrite(job);
 
         _logger.LogInformation("Created job {JobId} for {Records} records with batch size {BatchSize}", 
             jobId, recordCount, batchSize);
@@ -79,28 +91,23 @@ public class DataSeedJobService : BackgroundService, IDataSeedJobService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Data Seed Job Service started");
+        _logger.LogInformation("Data Seed Job Service started (using Channels - event-driven)");
 
-        while (!stoppingToken.IsCancellationRequested)
+        // ReadAllAsync waits for jobs to be written to the channel
+        // No polling loop! This blocks until a job is available
+        // Zero CPU usage when idle, instant wake-up when job arrives
+        await foreach (var job in _jobChannel.Reader.ReadAllAsync(stoppingToken))
         {
-            if (_jobQueue.TryDequeue(out var job))
+            try
             {
-                try
-                {
-                    await ProcessJobAsync(job, stoppingToken);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error processing job {JobId}", job.JobId);
-                    job.Status = DataSeedJobStatus.Failed;
-                    job.ErrorMessage = ex.Message;
-                    job.EndTime = DateTime.UtcNow;
-                }
+                await ProcessJobAsync(job, stoppingToken);
             }
-            else
+            catch (Exception ex)
             {
-                // Wait a bit before checking for new jobs
-                await Task.Delay(1000, stoppingToken);
+                _logger.LogError(ex, "Error processing job {JobId}", job.JobId);
+                job.Status = DataSeedJobStatus.Failed;
+                job.ErrorMessage = ex.Message;
+                job.EndTime = DateTime.UtcNow;
             }
         }
 
@@ -119,7 +126,7 @@ public class DataSeedJobService : BackgroundService, IDataSeedJobService
             job.JobId, job.TotalRecords, job.BatchSize);
 
         var stopwatch = Stopwatch.StartNew();
-        var batchSize = job.BatchSize; // Use the batch size from the job
+        var batchSize = job.BatchSize;
         var totalBatches = (int)Math.Ceiling((double)job.TotalRecords / batchSize);
 
         try
@@ -197,8 +204,8 @@ public class DataSeedJobService : BackgroundService, IDataSeedJobService
 
     public override void Dispose()
     {
-        _cancellationTokenSource.Cancel();
-        _cancellationTokenSource.Dispose();
+        // Complete the channel to signal no more jobs will be added
+        _jobChannel.Writer.Complete();
         base.Dispose();
     }
 }
